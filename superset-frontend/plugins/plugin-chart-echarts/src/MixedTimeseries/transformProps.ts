@@ -707,10 +707,18 @@ export default function transformProps(
         formatter: deduplicatedFormatter,
         rotate: xAxisLabelRotation,
         interval: xAxisLabelInterval,
-        ...(showMaxLabel && {
-          showMaxLabel: true,
-          alignMaxLabel: 'right',
-        }),
+        // Without a time grain the axis extent lands on the raw last
+        // data point, whose sub-hour precision makes the adaptive
+        // formatter emit a phantom ":04s"/".123ms" edge label. Disable
+        // the max label explicitly, since ECharts shows it by default.
+        ...(showMaxLabel
+          ? {
+              showMaxLabel: true,
+              alignMaxLabel: 'right',
+            }
+          : xAxisType === AxisType.Time && !timeGrainSqla
+            ? { showMaxLabel: false }
+            : {}),
       },
       minorTick: { show: minorTicks },
       minInterval:
