@@ -86,6 +86,51 @@ export const chartContextMenuStyles = (theme: SupersetTheme) => css`
   }
 `;
 
+/**
+ * Print-ready styles for the browser-print PDF report path
+ * (``DashboardStandaloneMode.Print``). They make long/overflowing widget
+ * content available to the browser print engine, remove internal scroll
+ * containers (so all table rows print rather than only the visible ones), and
+ * apply page-break rules. Charts without a natural content height (canvas/SVG)
+ * keep their dashboard-defined height.
+ */
+export const printModeStyles = () => css`
+  .dashboard--print {
+    // Let overflowing/scrollable widget content expand for the print engine.
+    .grid-content,
+    .dashboard-component-chart-holder,
+    .chart-container,
+    .dashboard-chart {
+      overflow: visible !important;
+    }
+
+    // Remove internal vertical scroll containers so all table rows are printed
+    // instead of only the visible ones.
+    .dashboard-component-chart-holder .dashboard-chart {
+      height: auto !important;
+      max-height: none !important;
+    }
+
+    // Avoid splitting an individual chart across pages when possible.
+    .dashboard-component-chart-holder {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    // Repeat table headers across printed pages.
+    table thead {
+      display: table-header-group;
+    }
+  }
+
+  @media print {
+    body {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+  }
+`;
+
 export const focusStyle = (theme: SupersetTheme) => css`
   a,
   .ant-tabs-tabpane,

@@ -26,6 +26,7 @@ from superset.utils.hashing import hash_from_dict
 from superset.utils.screenshots import (
     BaseScreenshot,
     ChartScreenshot,
+    DashboardPrint,
     DashboardScreenshot,
     ScreenshotCachePayload,
     ScreenshotCachePayloadType,
@@ -388,3 +389,39 @@ class TestScreenshotSubclassesDriverBehavior:
 
         assert driver._window == custom_window_size
         assert chart_screenshot.thumb_size == custom_thumb_size
+
+
+class TestDashboardPrint:
+    """Test DashboardPrint browser-print PDF helper."""
+
+    def test_url_uses_print_standalone_mode(self):
+        """The print URL is rendered in DashboardStandaloneMode.PRINT (=4)."""
+        printer = DashboardPrint("http://example.com/dashboard/1/")
+        assert "standalone=4" in printer.url
+
+    @patch("superset.utils.screenshots.PLAYWRIGHT_AVAILABLE", True)
+    @patch("superset.utils.screenshots.WebDriverPlaywright")
+    @patch("superset.extensions.feature_flag_manager.is_feature_enabled")
+    def test_get_pdf_uses_playwright(
+        self, mock_feature_flag, mock_playwright_cls, app_context, mock_user
+    ):
+        """get_pdf delegates to WebDriverPlaywright.get_pdf when available."""
+        mock_feature_flag.return_value = True
+        mock_driver = MagicMock()
+        mock_driver.get_pdf.return_value = b"fake_pdf"
+        mock_playwright_cls.return_value = mock_driver
+
+        result = DashboardPrint("http://example.com/dashboard/1/").get_pdf(mock_user)
+
+        assert result == b"fake_pdf"
+        mock_driver.get_pdf.assert_called_once()
+
+    @patch("superset.utils.screenshots.PLAYWRIGHT_AVAILABLE", False)
+    @patch("superset.extensions.feature_flag_manager.is_feature_enabled")
+    def test_get_pdf_returns_none_without_playwright(
+        self, mock_feature_flag, mock_user
+    ):
+        """get_pdf returns None when Playwright is unavailable, enabling fallback."""
+        mock_feature_flag.return_value = True
+        result = DashboardPrint("http://example.com/dashboard/1/").get_pdf(mock_user)
+        assert result is None

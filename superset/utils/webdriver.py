@@ -46,6 +46,13 @@ from superset.utils.screenshot_utils import take_tiled_screenshot
 WindowSize = tuple[int, int]
 logger = logging.getLogger(__name__)
 
+# DOM marker rendered by the print-ready dashboard (DashboardStandaloneMode.PRINT)
+# once the report is ready to be printed: metadata loaded, layout rendered, and all
+# report-scope charts either loaded or failed with a visible error state. The
+# browser-print PDF worker waits for this selector before calling ``page.pdf()``.
+# This is an internal reporting readiness contract, not a public API.
+REPORT_READY_MARKER_SELECTOR = ".report-ready-marker"
+
 # Installation message for missing Playwright (Cypress doesn't work with DeckGL)
 PLAYWRIGHT_INSTALL_MESSAGE = (
     "To complete the migration from Cypress "
@@ -186,6 +193,11 @@ class DashboardStandaloneMode(Enum):
     HIDE_NAV = 1
     HIDE_NAV_AND_TITLE = 2
     REPORT = 3
+    # Print-ready rendering used by the browser-print PDF report path. Renders a
+    # print-friendly, vertically stacked layout and exposes a readiness marker
+    # (see ``REPORT_READY_MARKER_SELECTOR``) so the reporting worker knows when
+    # the dashboard is ready for ``page.pdf()``.
+    PRINT = 4
 
 
 class ChartStandaloneMode(Enum):
@@ -529,6 +541,98 @@ class WebDriverPlaywright(WebDriverProxy):
         finally:
             context.close()
         return img
+
+    @staticmethod
+    def _build_pdf_options() -> dict[str, Any]:
+        """
+        Translate the ``PDF_REPORTS_OPTIONS`` config into ``page.pdf()`` kwargs.
+        """
+        options = app.config.get("PDF_REPORTS_OPTIONS") or {}
+        pdf_kwargs: dict[str, Any] = {
+            "format": options.get("format", "A4"),
+            "landscape": options.get("landscape", False),
+            "print_background": options.get("print_background", True),
+            "scale": options.get("scale", 1),
+        }
+        if margin := options.get("margin"):
+            pdf_kwargs["margin"] = margin
+        return pdf_kwargs
+
+    def get_pdf(self, url: str, user: User | None = None) -> bytes | None:
+        """
+        Render a print-ready dashboard and produce a PDF using the browser print
+        engine (``page.pdf()``).
+
+        The page is expected to be served in ``DashboardStandaloneMode.PRINT`` so
+        it renders a print-friendly layout and exposes the readiness marker
+        (``REPORT_READY_MARKER_SELECTOR``). The worker waits for that marker before
+        printing so charts have loaded or failed with a visible error state.
+
+        Returns ``None`` when Playwright is unavailable so callers can fall back to
+        the screenshot-to-PDF path.
+        """
+        if not PLAYWRIGHT_AVAILABLE:
+            logger.info(
+                "Playwright not available - cannot generate browser-print PDF. %s",
+                PLAYWRIGHT_INSTALL_MESSAGE,
+            )
+            return None
+
+        browser_args = app.config["WEBDRIVER_OPTION_ARGS"]
+        browser = _browser_manager.get_browser(browser_args)
+        pixel_density = app.config["WEBDRIVER_WINDOW"].get("pixel_density", 1)
+        context = browser.new_context(
+            bypass_csp=True,
+            viewport={"height": self._window[1], "width": self._window[0]},
+            device_scale_factor=pixel_density,
+        )
+        context.set_default_timeout(app.config["SCREENSHOT_PLAYWRIGHT_DEFAULT_TIMEOUT"])
+        if user:
+            self.auth(user, context)
+        page = context.new_page()
+        pdf: bytes | None = None
+        ready_timeout = app.config["PDF_REPORTS_READY_TIMEOUT"] * 1000
+        try:
+            try:
+                page.goto(
+                    url,
+                    wait_until=app.config["SCREENSHOT_PLAYWRIGHT_WAIT_EVENT"],
+                )
+            except PlaywrightTimeout:
+                logger.exception(
+                    "Web event %s not detected. Page %s might not have been "
+                    "fully loaded",
+                    app.config["SCREENSHOT_PLAYWRIGHT_WAIT_EVENT"],
+                    url,
+                )
+            try:
+                # Emulate print media so print CSS is applied before rendering.
+                page.emulate_media(media="print")
+                logger.debug(
+                    "Waiting for report readiness marker %s at url: %s",
+                    REPORT_READY_MARKER_SELECTOR,
+                    url,
+                )
+                page.locator(REPORT_READY_MARKER_SELECTOR).wait_for(
+                    state="attached", timeout=ready_timeout
+                )
+            except PlaywrightTimeout:
+                logger.warning(
+                    "Timed out waiting for report readiness marker at url %s; "
+                    "printing current DOM state",
+                    url,
+                )
+            pdf = page.pdf(**WebDriverPlaywright._build_pdf_options())
+            logger.debug(
+                "PDF result: %d bytes for url: %s", len(pdf) if pdf else 0, url
+            )
+        except PlaywrightError:
+            logger.exception(
+                "Encountered an unexpected error generating PDF for url %s", url
+            )
+        finally:
+            context.close()
+        return pdf
 
 
 class WebDriverSelenium(WebDriverProxy):

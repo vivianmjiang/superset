@@ -17,7 +17,7 @@
 
 import json  # noqa: TID251
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -2012,3 +2012,102 @@ def test_get_url_for_csv_uses_post_processed_type(
         f"CSV report URL must use type=post_processed so chart filters "
         f"(incl. time filters) are applied; got: {url}; see issue #25538"
     )
+
+
+# ---------------------------------------------------------------------------
+# Browser-print PDF report path (DASHBOARD_REPORTS_BROWSER_PRINT_PDF)
+# ---------------------------------------------------------------------------
+
+
+@patch("superset.commands.report.execute.build_pdf_from_screenshots")
+@patch("superset.commands.report.execute.feature_flag_manager")
+def test_get_pdf_flag_disabled_uses_screenshots(
+    mock_ff, mock_build, mocker: MockerFixture
+) -> None:
+    """With the flag off, _get_pdf keeps the screenshot-to-PDF behavior."""
+    mock_ff.is_feature_enabled.return_value = False
+    state = _make_notification_state(
+        mocker, report_format=ReportDataFormat.PDF, has_chart=False
+    )
+    mocker.patch.object(state, "_get_screenshots", return_value=[b"img"])
+    mock_build.return_value = b"%PDF-screenshot"
+    browser = mocker.patch.object(state, "_get_browser_print_pdf")
+
+    assert state._get_pdf() == b"%PDF-screenshot"
+    browser.assert_not_called()
+
+
+@patch("superset.commands.report.execute.feature_flag_manager")
+def test_get_pdf_flag_enabled_uses_browser_print(
+    mock_ff, mocker: MockerFixture
+) -> None:
+    """With the flag on and browser-print succeeding, screenshots are skipped."""
+    mock_ff.is_feature_enabled.return_value = True
+    state = _make_notification_state(
+        mocker, report_format=ReportDataFormat.PDF, has_chart=False
+    )
+    mocker.patch.object(state, "_get_browser_print_pdf", return_value=b"%PDF-browser")
+    screenshots = mocker.patch.object(state, "_get_screenshots")
+
+    assert state._get_pdf() == b"%PDF-browser"
+    screenshots.assert_not_called()
+
+
+@patch("superset.commands.report.execute.build_pdf_from_screenshots")
+@patch("superset.commands.report.execute.feature_flag_manager")
+def test_get_pdf_falls_back_to_screenshots(
+    mock_ff, mock_build, mocker: MockerFixture
+) -> None:
+    """With the flag on but browser-print returning None, fall back to screenshots."""
+    mock_ff.is_feature_enabled.return_value = True
+    state = _make_notification_state(
+        mocker, report_format=ReportDataFormat.PDF, has_chart=False
+    )
+    mocker.patch.object(state, "_get_browser_print_pdf", return_value=None)
+    mocker.patch.object(state, "_get_screenshots", return_value=[b"img"])
+    mock_build.return_value = b"%PDF-screenshot"
+
+    assert state._get_pdf() == b"%PDF-screenshot"
+
+
+def test_browser_print_pdf_none_for_chart(mocker: MockerFixture, app_context) -> None:
+    """Chart reports are not eligible for browser-print PDF (screenshot fallback)."""
+    state = _make_notification_state(
+        mocker, report_format=ReportDataFormat.PDF, has_chart=True
+    )
+    assert state._get_browser_print_pdf() is None
+
+
+def test_browser_print_pdf_none_for_multitab(
+    mocker: MockerFixture, app_context
+) -> None:
+    """Multi-tab reports fall back to screenshot PDF (need PDF merge)."""
+    state = _make_notification_state(
+        mocker, report_format=ReportDataFormat.PDF, has_chart=False
+    )
+    mocker.patch.object(
+        state, "get_dashboard_urls", return_value=["http://d/1", "http://d/2"]
+    )
+    assert state._get_browser_print_pdf() is None
+
+
+@patch("superset.commands.report.execute.resolve_executor_user")
+@patch("superset.commands.report.execute.DashboardPrint")
+def test_browser_print_pdf_happy_path(
+    mock_print_cls, mock_resolve, mocker: MockerFixture, app_context
+) -> None:
+    """Single-tab dashboard reports render a print PDF via DashboardPrint."""
+    mock_resolve.return_value = (MagicMock(), "user")
+    state = _make_notification_state(
+        mocker, report_format=ReportDataFormat.PDF, has_chart=False
+    )
+    state._report_schedule.custom_width = None
+    state._report_schedule.custom_height = None
+    mocker.patch.object(state, "get_dashboard_urls", return_value=["http://d/1"])
+    instance = MagicMock()
+    instance.get_pdf.return_value = b"%PDF-browser"
+    mock_print_cls.return_value = instance
+
+    assert state._get_browser_print_pdf() == b"%PDF-browser"
+    mock_print_cls.assert_called_once()
+    instance.get_pdf.assert_called_once()

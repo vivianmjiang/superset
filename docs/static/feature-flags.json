@@ -28,6 +28,12 @@
         "description": "Experimental PyArrow engine for CSV parsing (may have issues with dates/nulls)"
       },
       {
+        "name": "DASHBOARD_REPORTS_BROWSER_PRINT_PDF",
+        "default": false,
+        "lifecycle": "development",
+        "description": "Experimental: generate dashboard PDF reports using the browser print engine (Playwright/Chromium ``page.pdf()``) rendered from a print-ready dashboard layout, instead of stitching browser screenshots together. When disabled, the existing screenshot-to-PDF behavior is used. The browser-print path also falls back to screenshot-to-PDF if it fails. See ``PDF_REPORTS_*`` config."
+      },
+      {
         "name": "DATASET_FOLDERS",
         "default": false,
         "lifecycle": "development",

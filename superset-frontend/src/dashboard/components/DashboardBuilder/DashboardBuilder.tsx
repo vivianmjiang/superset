@@ -19,6 +19,7 @@
 /* eslint-env browser */
 import cx from 'classnames';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Global } from '@emotion/react';
 import { t } from '@apache-superset/core/translation';
 import { addAlpha, JsonObject, useElementOnScreen } from '@superset-ui/core';
 import { css, styled, useTheme } from '@apache-superset/core/theme';
@@ -68,6 +69,8 @@ import {
   OPEN_FILTER_BAR_WIDTH,
   EMPTY_CONTAINER_Z_INDEX,
 } from 'src/dashboard/constants';
+import ReportReadyMarker from 'src/dashboard/components/ReportReadyMarker';
+import { printModeStyles } from 'src/dashboard/styles';
 import { getRootLevelTabsComponent, shouldFocusTabs } from './utils';
 import DashboardContainer from './DashboardContainer';
 import { useNativeFilters } from './state';
@@ -420,7 +423,8 @@ const DashboardBuilder = () => {
       ? dashboardLayout[rootChildId]
       : undefined;
   const standaloneMode = getUrlParam(URL_PARAMS.standalone);
-  const isReport = standaloneMode === DashboardStandaloneMode.Report;
+  const isPrint = standaloneMode === DashboardStandaloneMode.Print;
+  const isReport = standaloneMode === DashboardStandaloneMode.Report || isPrint;
   const hideDashboardHeader =
     uiConfig.hideTitle ||
     standaloneMode === DashboardStandaloneMode.HideNavAndTitle ||
@@ -622,6 +626,7 @@ const DashboardBuilder = () => {
 
   return (
     <DashboardWrapper>
+      {isPrint && <Global styles={printModeStyles()} />}
       {isVerticalFilterBarVisible && (
         <ResizableSidebar
           id={`dashboard:${dashboardId}`}
@@ -679,7 +684,11 @@ const DashboardBuilder = () => {
           )}
         <DashboardContentWrapper
           data-test="dashboard-content-wrapper"
-          className={cx('dashboard', editMode && 'dashboard--editing')}
+          className={cx(
+            'dashboard',
+            editMode && 'dashboard--editing',
+            isPrint && 'dashboard--print',
+          )}
         >
           <StyledDashboardContent
             className="dashboard-content"
@@ -719,6 +728,7 @@ const DashboardBuilder = () => {
             {editMode && <BuilderComponentPane topOffset={barTopOffset} />}
           </StyledDashboardContent>
         </DashboardContentWrapper>
+        {isPrint && showDashboard && <ReportReadyMarker />}
       </StyledContent>
       {dashboardIsSaving && (
         <Loading

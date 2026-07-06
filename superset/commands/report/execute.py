@@ -80,7 +80,11 @@ from superset.utils.csv import get_chart_csv_data, get_chart_dataframe
 from superset.utils.decorators import logs_context, transaction
 from superset.utils.file import sanitize_title
 from superset.utils.pdf import build_pdf_from_screenshots
-from superset.utils.screenshots import ChartScreenshot, DashboardScreenshot
+from superset.utils.screenshots import (
+    ChartScreenshot,
+    DashboardPrint,
+    DashboardScreenshot,
+)
 from superset.utils.slack import get_channels_with_search, SlackChannelTypes
 from superset.utils.urls import get_url_path
 
@@ -545,11 +549,72 @@ class BaseReportState:
             raise ReportScheduleScreenshotFailedError()
         return imges
 
+    def _get_browser_print_pdf(self) -> Optional[bytes]:
+        """
+        Generate a dashboard PDF using the browser print engine (``page.pdf()``)
+        from a print-ready dashboard rendering.
+
+        Returns ``None`` when the browser-print path is not applicable (chart
+        reports, multi-tab reports, or Playwright unavailable), so the caller can
+        fall back to the screenshot-to-PDF path.
+        """
+        if not self._report_schedule.dashboard:
+            # Browser-print PDF currently supports dashboard reports only.
+            return None
+
+        urls = self.get_dashboard_urls()
+        if len(urls) != 1:
+            # Multi-tab reports require merging multiple printed PDFs, which is
+            # part of the (follow-up) incremental printing capability.
+            logger.info(
+                "Browser-print PDF skipped for multi-tab report; "
+                "falling back to screenshot PDF - execution_id: %s",
+                self._execution_id,
+            )
+            return None
+
+        user, _ = resolve_executor_user(self._report_schedule)
+        max_width = app.config["ALERT_REPORTS_MAX_CUSTOM_SCREENSHOT_WIDTH"]
+        window_width, window_height = app.config["WEBDRIVER_WINDOW"]["dashboard"]
+        width = min(max_width, self._report_schedule.custom_width or window_width)
+        height = self._report_schedule.custom_height or window_height
+
+        start_time = datetime.utcnow()
+        try:
+            pdf = DashboardPrint(urls[0], window_size=(width, height)).get_pdf(
+                user=user
+            )
+        except SoftTimeLimitExceeded as ex:
+            raise ReportScheduleScreenshotTimeout() from ex
+        except Exception as ex:  # pylint: disable=broad-except
+            logger.warning(
+                "Browser-print PDF failed after %.2fs; falling back to screenshot "
+                "PDF - execution_id: %s - %s",
+                (datetime.utcnow() - start_time).total_seconds(),
+                self._execution_id,
+                str(ex),
+            )
+            return None
+
+        if pdf:
+            logger.info(
+                "Browser-print PDF generated in %.2fs - execution_id: %s",
+                (datetime.utcnow() - start_time).total_seconds(),
+                self._execution_id,
+            )
+        return pdf
+
     def _get_pdf(self) -> bytes:
         """
         Get chart or dashboard pdf
         :raises: ReportSchedulePdfFailedError
         """
+        if feature_flag_manager.is_feature_enabled(
+            "DASHBOARD_REPORTS_BROWSER_PRINT_PDF"
+        ):
+            if pdf := self._get_browser_print_pdf():
+                return pdf
+
         screenshots = self._get_screenshots()
         pdf = build_pdf_from_screenshots(screenshots)
 

@@ -432,3 +432,43 @@ class DashboardScreenshot(BaseScreenshot):
             "permalink_key": permalink_key,
         }
         return hash_from_dict(args)
+
+
+class DashboardPrint:
+    """
+    Render a dashboard in print-ready mode (``DashboardStandaloneMode.PRINT``) and
+    produce a PDF using the browser print engine (``page.pdf()``).
+
+    Unlike :class:`DashboardScreenshot`, this does not stitch together browser
+    screenshots — it prints the rendered HTML directly, so text stays selectable,
+    links remain clickable, and scrollable/overflowing widget content can expand.
+    Only Playwright supports browser printing; ``get_pdf`` returns ``None`` when
+    Playwright is unavailable so callers can fall back to the screenshot-to-PDF
+    path.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        window_size: WindowSize | None = None,
+    ):
+        self.url = modify_url_query(
+            url,
+            standalone=DashboardStandaloneMode.PRINT.value,
+        )
+        self.window_size = window_size or DEFAULT_DASHBOARD_WINDOW_SIZE
+
+    def get_pdf(self, user: User | None = None) -> bytes | None:
+        if not (
+            feature_flag_manager.is_feature_enabled("PLAYWRIGHT_REPORTS_AND_THUMBNAILS")
+            and PLAYWRIGHT_AVAILABLE
+        ):
+            logger.info(
+                "Browser-print PDF requires Playwright "
+                "(PLAYWRIGHT_REPORTS_AND_THUMBNAILS feature flag). %s",
+                PLAYWRIGHT_INSTALL_MESSAGE,
+            )
+            return None
+
+        driver = WebDriverPlaywright(app.config["WEBDRIVER_TYPE"], self.window_size)
+        return driver.get_pdf(self.url, user)

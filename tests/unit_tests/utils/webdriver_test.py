@@ -1197,3 +1197,108 @@ class TestWebDriverPlaywrightAnimationWaitOrder:
         assert timeout_values == [0], (
             f"Expected only [0] (headstart), got {timeout_values}"
         )
+
+
+class TestWebDriverPlaywrightPdf:
+    """Test WebDriverPlaywright.get_pdf browser-print PDF generation."""
+
+    _pdf_config = {
+        "WEBDRIVER_OPTION_ARGS": [],
+        "WEBDRIVER_WINDOW": {"pixel_density": 1},
+        "SCREENSHOT_LOCATE_WAIT": 10,
+        "SCREENSHOT_LOAD_WAIT": 10,
+        "SCREENSHOT_PLAYWRIGHT_DEFAULT_TIMEOUT": 30000,
+        "SCREENSHOT_PLAYWRIGHT_WAIT_EVENT": "networkidle",
+        "PDF_REPORTS_READY_TIMEOUT": 60,
+        "PDF_REPORTS_OPTIONS": {
+            "format": "Letter",
+            "landscape": True,
+            "print_background": True,
+            "scale": 1,
+            "margin": {"top": "1in"},
+        },
+    }
+
+    @patch("superset.utils.webdriver.PLAYWRIGHT_AVAILABLE", False)
+    @patch("superset.utils.webdriver.logger")
+    def test_get_pdf_returns_none_when_unavailable(self, mock_logger):
+        """get_pdf returns None (so caller can fall back) when Playwright is off."""
+        driver = WebDriverPlaywright("chrome")
+        assert driver.get_pdf("http://example.com", MagicMock()) is None
+        mock_logger.info.assert_called_once()
+        assert "Playwright not available" in mock_logger.info.call_args[0][0]
+
+    @patch("superset.utils.webdriver.PLAYWRIGHT_AVAILABLE", True)
+    @patch("superset.utils.webdriver._browser_manager")
+    @patch("superset.utils.webdriver.app")
+    def test_get_pdf_calls_page_pdf_with_options(self, mock_app, mock_browser_manager):
+        """get_pdf waits for the readiness marker then prints with config options."""
+        mock_app.config = self._pdf_config
+        mock_user = MagicMock()
+
+        mock_browser = MagicMock()
+        mock_context = MagicMock()
+        mock_page = MagicMock()
+        mock_locator = MagicMock()
+        mock_browser_manager.get_browser.return_value = mock_browser
+        mock_browser.new_context.return_value = mock_context
+        mock_context.new_page.return_value = mock_page
+        mock_page.locator.return_value = mock_locator
+        mock_page.pdf.return_value = b"fake_pdf"
+
+        with patch.object(WebDriverPlaywright, "auth", return_value=mock_context):
+            result = WebDriverPlaywright("chrome").get_pdf(
+                "http://example.com", mock_user
+            )
+
+        assert result == b"fake_pdf"
+        # Print media is emulated and the readiness marker is awaited.
+        mock_page.emulate_media.assert_called_once_with(media="print")
+        mock_page.locator.assert_called_once_with(".report-ready-marker")
+        mock_locator.wait_for.assert_called_once()
+        # page.pdf() receives the translated config options.
+        pdf_kwargs = mock_page.pdf.call_args.kwargs
+        assert pdf_kwargs["format"] == "Letter"
+        assert pdf_kwargs["landscape"] is True
+        assert pdf_kwargs["print_background"] is True
+        assert pdf_kwargs["margin"] == {"top": "1in"}
+        mock_context.close.assert_called_once()
+
+    @patch("superset.utils.webdriver.PLAYWRIGHT_AVAILABLE", True)
+    @patch("superset.utils.webdriver._browser_manager")
+    @patch("superset.utils.webdriver.app")
+    def test_get_pdf_prints_even_if_marker_times_out(
+        self, mock_app, mock_browser_manager
+    ):
+        """If the readiness marker never appears, still print the current DOM."""
+        from superset.utils.webdriver import PlaywrightTimeout
+
+        mock_app.config = self._pdf_config
+        mock_browser = MagicMock()
+        mock_context = MagicMock()
+        mock_page = MagicMock()
+        mock_locator = MagicMock()
+        mock_browser_manager.get_browser.return_value = mock_browser
+        mock_browser.new_context.return_value = mock_context
+        mock_context.new_page.return_value = mock_page
+        mock_page.locator.return_value = mock_locator
+        mock_locator.wait_for.side_effect = PlaywrightTimeout()
+        mock_page.pdf.return_value = b"fake_pdf"
+
+        with patch.object(WebDriverPlaywright, "auth", return_value=mock_context):
+            result = WebDriverPlaywright("chrome").get_pdf(
+                "http://example.com", MagicMock()
+            )
+
+        assert result == b"fake_pdf"
+        mock_page.pdf.assert_called_once()
+
+    @patch("superset.utils.webdriver.app")
+    def test_build_pdf_options_defaults(self, mock_app):
+        """_build_pdf_options falls back to sane defaults when config is empty."""
+        mock_app.config = {}
+        options = WebDriverPlaywright._build_pdf_options()
+        assert options["format"] == "A4"
+        assert options["landscape"] is False
+        assert options["print_background"] is True
+        assert "margin" not in options
