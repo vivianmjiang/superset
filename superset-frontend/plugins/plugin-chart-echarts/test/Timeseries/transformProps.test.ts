@@ -1497,6 +1497,35 @@ test('x-axis does not force showMaxLabel when no time grain is set', () => {
   expect(xAxisResult.axisLabel.showMaxLabel).not.toBe(true);
 });
 
+test('x-axis suppresses the phantom edge label on a time axis with no time grain', () => {
+  // Temporal columns with sub-hour precision and no time grain (e.g. Pinot
+  // epoch_ms) leave the axis extent on the raw last data point. ECharts shows
+  // that boundary label by default, and the adaptive formatter renders it at
+  // second/millisecond granularity (":04s"/".123ms"), which looks broken next
+  // to the coarser data-point ticks. showMaxLabel must be explicitly false.
+  const data = [
+    { __timestamp: Date.UTC(2003, 0, 6, 12, 0, 0), sales: 100 },
+    { __timestamp: Date.UTC(2003, 0, 6, 16, 0, 0), sales: 200 },
+    { __timestamp: Date.UTC(2003, 0, 6, 20, 0, 4), sales: 300 },
+  ];
+
+  const chartProps = createTestChartProps({
+    formData: {
+      granularity_sqla: 'ds',
+      timeGrainSqla: undefined,
+    },
+    queriesData: [
+      createTestQueryData(data, {
+        colnames: ['__timestamp', 'sales'],
+        coltypes: [GenericDataType.Temporal, GenericDataType.Numeric],
+      }),
+    ],
+  });
+
+  const xAxisResult = transformProps(chartProps).echartOptions.xAxis as any;
+  expect(xAxisResult.axisLabel.showMaxLabel).toBe(false);
+});
+
 test('numeric x coltype routes through the number formatter (not the time formatter)', () => {
   // Regression guard for echarts-timeseries-epoch-x-axis-labels investigation.
   // When the query reports a Numeric x-axis coltype (including epoch-ms-like
