@@ -648,6 +648,13 @@ DEFAULT_FEATURE_FLAGS: dict[str, bool] = {
     # Allow metrics and columns to be grouped into folders in the chart builder
     # @lifecycle: development
     "DATASET_FOLDERS": False,
+    # Experimental: generate dashboard PDF reports using the browser print engine
+    # (Playwright/Chromium ``page.pdf()``) rendered from a print-ready dashboard
+    # layout, instead of stitching browser screenshots together. When disabled,
+    # the existing screenshot-to-PDF behavior is used. The browser-print path also
+    # falls back to screenshot-to-PDF if it fails. See ``PDF_REPORTS_*`` config.
+    # @lifecycle: development
+    "DASHBOARD_REPORTS_BROWSER_PRINT_PDF": False,
     # Enable support for date range timeshifts (e.g., "2015-01-03 : 2015-01-04")
     # in addition to relative timeshifts (e.g., "1 day ago")
     # @lifecycle: development
@@ -2314,6 +2321,35 @@ WEBDRIVER_CONFIGURATION = {
 # Additional args to be passed as arguments to the config object
 # Note: If using Chrome, you'll want to add the "--marionette" arg.
 WEBDRIVER_OPTION_ARGS = ["--headless"]
+
+# -----------------------------------------------------------------------------
+# Browser-print PDF reports (experimental)
+# -----------------------------------------------------------------------------
+# These options only apply when the ``DASHBOARD_REPORTS_BROWSER_PRINT_PDF``
+# feature flag is enabled and Playwright is used to render reports. They control
+# how the browser print engine (``page.pdf()``) generates dashboard PDFs from a
+# print-ready dashboard rendering. When the flag is disabled they are ignored.
+PDF_REPORTS_OPTIONS = {
+    # Paper format passed to the browser print engine (e.g. "A4", "Letter").
+    "format": "A4",
+    # Page orientation: True renders in landscape, False in portrait.
+    "landscape": False,
+    # Print background graphics (chart colors, etc.).
+    "print_background": True,
+    # Scale of the webpage rendering (0.1 - 2.0).
+    "scale": 1,
+    # Page margins. Accepts CSS units (e.g. "0.4in", "10mm").
+    "margin": {
+        "top": "0.4in",
+        "right": "0.4in",
+        "bottom": "0.4in",
+        "left": "0.4in",
+    },
+}
+
+# Maximum time (in seconds) to wait for the print-ready dashboard to signal it is
+# ready before invoking the browser print engine.
+PDF_REPORTS_READY_TIMEOUT = int(timedelta(seconds=60).total_seconds())
 
 # The base URL to query for accessing the user interface
 WEBDRIVER_BASEURL = "http://0.0.0.0:8080/"

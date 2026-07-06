@@ -77,4 +77,7 @@ export enum DashboardStandaloneMode {
   HideNav = 1,
   HideNavAndTitle = 2,
   Report = 3,
+  // Print-ready rendering for the browser-print PDF report path: hides
+  // interactive controls, applies print CSS, and exposes a readiness marker.
+  Print = 4,
 }
